@@ -1,18 +1,21 @@
 {
-  "name": "node-red-contrib-stoptimer-varidelay",
-  "version": "0.5.3",
-  "description": "This node allows for pre-configured, or dynamic delay. It also allows the node to stop the output. It can be configured to be persistent across reboot/restarts/redeploys.",
+  "name": "node-red-contrib-stoptimer-varidelay-plus",
+  "version": "0.5.4",
+  "description": "An enhanced Node-RED timer node with variable delay, pause/resume, persistent state, and configurable reporting. Forked from node-red-contrib-stoptimer-varidelay by hamsando.",
   "dependencies": {},
   "repository": {
     "type": "git",
-    "url": "https://github.com/hamsando/node-red-contrib-stoptimer-varidelay/"
+    "url": "https://github.com/mchristegh/node-red-contrib-stoptimer-varidelay/"
   },
   "license": "Apache-2.0",
   "keywords": [
     "node-red",
     "timer",
     "delay",
-    "stoptimer"
+    "stoptimer",
+    "pause",
+    "resume",
+    "persist"
   ],
   "node-red": {
     "nodes": {
@@ -20,6 +23,6 @@
     }
   },
   "author": {
-    "name": "putch"
+    "name": "mchristegh"
   }
 }
