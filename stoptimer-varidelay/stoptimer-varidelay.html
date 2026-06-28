@@ -2,8 +2,6 @@
   Modifications copyright (C) 2020 hamsando
   Copyright jbardi
 
-  Modifications copyright (C) 2025 mchristegh
-
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
@@ -18,7 +16,7 @@
 -->
 
 <script type="text/javascript">
-    RED.nodes.registerType('stoptimer-varidelay',{
+    RED.nodes.registerType('stoptimer-varidelay-plus',{
         category: 'function',
         color:"#869869",
         defaults: {
@@ -71,7 +69,7 @@
     });
 </script>
 
-<script type="text/x-red" data-template-name="stoptimer-varidelay">
+<script type="text/x-red" data-template-name="stoptimer-varidelay-plus">
     <div class="form-row">
         <i class="fa fa-clock-o"></i>
         <label for="node-input-duration"> Timer</label>
@@ -134,7 +132,7 @@
     </div>
 </script>
 
-<script type="text/x-red" data-help-name="stoptimer-varidelay">
+<script type="text/x-red" data-help-name="stoptimer-varidelay-plus">
     <p><B>General usage</B><br>
        Sends the <code>msg</code> through the first output after the set timer duration. If a new <code>msg</code> is received before the timer has ended, it will replace the existing <code>msg</code> and the timer will be restarted, unless the new <code>msg</code> has a <code>payload</code> of <code>stop</code>, <code>STOP</code>, <code>pause</code>, <code>PAUSE</code>, <code>resume</code>, or <code>RESUME</code>. The second output allows you to send an additional payload of a number, string or boolean. If the timer is stopped, the second and third outputs will automatically send a payload of <code>stopped</code>. The third output will send the time remaining as time ticks away.
     <br><br>The status below the node as well as the third output can be configured via the <I>Reporting</I> field in the node to update at a frequency of:
@@ -156,8 +154,8 @@
       All output messages include the following additional properties:
       <ul>
         <li><code>msg.timerState</code> — the current state of the timer: <code>running</code>, <code>paused</code>, <code>stopped</code>, or <code>expired</code></li>
-        <li><code>msg.timerDuration</code> — the original timer duration in milliseconds</li>
-        <li><code>msg.elapsedTime</code> — the elapsed time in milliseconds (outputs 1, 2, and 3)</li>
+        <li><code>msg.timerDuration</code> — the original timer duration in milliseconds (outputs 1, 2, and 3)</li>
+        <li><code>msg.elapsedTime</code> — the time elapsed since the timer started in milliseconds (outputs 1, 2, and 3)</li>
         <li><code>msg.remainingTime</code> — the remaining time in milliseconds (outputs 3 and 4)</li>
       </ul>
     </p>
@@ -210,8 +208,8 @@
       <b>Why does this behavior exist?</b><br>
       It is a legacy thing, it was part of the original stoptimer whose code I forked. Not sure what exactly the original intent was, but I'm sure there is some rationale.
       <br><br>
-      <b>How does Stoptimer-Varidelay handle this?</b><br>
-      <i>Ignore Timerpass</i> in the node config dialog. If enabled in a given stoptimer-varidelay node, it will ignore the presence of the <code>_timerpass</code> property on an incoming message and will process the incoming message as it does every other message.
+      <b>How does Stoptimer-Varidelay Plus handle this?</b><br>
+      <i>Ignore Timerpass</i> in the node config dialog. If enabled in a given stoptimer-varidelay-plus node, it will ignore the presence of the <code>_timerpass</code> property on an incoming message and will process the incoming message as it does every other message.
       By default, this option is not enabled in order to preserve compatibility with any existing flows. Note that you may need to refresh the web UI after updating the node in order to see the new "ignore timerpass" option.
     </p>
     <p><b>Do Not Reset Timer on Subsequent Incoming Message</b><br>
