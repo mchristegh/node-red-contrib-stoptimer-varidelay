@@ -1,8 +1,7 @@
 /**
+ * Modifications copyright (C) 2025 mchristegh
  * Modifications copyright (C) 2020 hamsando
  * Copyright jbardi
- *
- * Modifications copyright (C) 2025 mchristegh
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,6 +44,10 @@ module.exports = function(RED) {
     this.persist = n.persist || false;
     this.ignoretimerpass = n.ignoretimerpass || false;
     this.donotresettimer = n.donotresettimer || false;
+    this.thresholdaction = n.thresholdaction || "donothing";
+    this.thresholdcount = isNaN(Number(n.thresholdcount)) ? 0 : Number(n.thresholdcount);
+    this.thresholdaddtime = isNaN(Number(n.thresholdaddtime)) ? 0 : Number(n.thresholdaddtime);
+    this.thresholdaddtimeunits = n.thresholdaddtimeunits || "Second";
 
     if (this.duration <= 0) {
         this.duration = 0;
@@ -97,6 +100,7 @@ module.exports = function(RED) {
     let timerState = "stopped";
     let timerStartTime = null;
     let timerDuration = 0;
+    let originalMsg = null;
 
     // Read the state from a persistent file
     if (this.persist == true) {
@@ -118,9 +122,14 @@ module.exports = function(RED) {
           if (typeof savedState.lastIgnoredTime !== 'undefined' && savedState.lastIgnoredTime !== null) {
             lastIgnoredTime = new Date(savedState.lastIgnoredTime);
           }
+          if (typeof savedState.timerStartTime !== 'undefined' && savedState.timerStartTime !== null) {
+            timerStartTime = new Date(savedState.timerStartTime);
+          }
+          if (typeof savedState.timerState !== 'undefined') {
+            timerState = savedState.timerState;
+          }
 
           if (savedState.paused === true) {
-            // Restore as paused at the saved remaining time
             let remainingMS = targetMS - nowMS;
             if (remainingMS <= 0) {
               remainingMS = (Math.floor((Math.random() * 5) + 3) * 1000);
@@ -221,32 +230,218 @@ module.exports = function(RED) {
       return (new Date()).getTime() - timerStartTime.getTime();
     }
 
+    function buildEventMessage(timerEvent) {
+      return {
+        timerEvent: timerEvent,
+        timerState: timerState,
+        remainingTime: delayRemainingDisplay,
+        timerDuration: timerDuration,
+        elapsedTime: getElapsedTime(),
+        ignoredCount: ignoredCount,
+        lastIgnoredTime: lastIgnoredTime ? lastIgnoredTime.toISOString() : null
+      };
+    }
+
+    // Helper: start/restart the underlying setTimeout chain
+    function startTimeout(msg) {
+      actualDelayRemaining = delayRemainingDisplay;
+      if (actualDelayRemaining > maxTimeout) {
+        actualDelayInUse = maxTimeout;
+        actualDelayRemaining = actualDelayRemaining - maxTimeout;
+      } else {
+        actualDelayInUse = actualDelayRemaining;
+        actualDelayRemaining = 0;
+      }
+      timeout = setTimeout(timerElapsed, actualDelayInUse, msg);
+    }
+
+    // Helper: start/restart reporting intervals
+    function startReporting(msg) {
+      if (reporting === "none") {
+        let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+        node.status(statusObj);
+        return;
+      }
+
+      let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+      node.status(statusObj);
+      let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+      node.send([null, null, msg3, null, null]);
+
+      if ((delayRemainingDisplay > 60000) && (reporting === "last_minute_seconds")) {
+        miniTimeout = setTimeout(function() {
+          if ((delayRemainingDisplay % 60000) != 0) {
+            delayRemainingDisplay = delayRemainingDisplay - (delayRemainingDisplay % 60000);
+            let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+            let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+            node.status(statusObj);
+            node.send([null, null, msg3, null, null]);
+          }
+
+          if (delayRemainingDisplay <= 60000) {
+            countdown = setInterval(function() {
+              delayRemainingDisplay = delayRemainingDisplay - 1000;
+              let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+              let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+              node.status(statusObj);
+              node.send([null, null, msg3, null, null]);
+            }, 1000);
+          } else {
+            countdown = setInterval(function() {
+              if (delayRemainingDisplay > 60000) {
+                delayRemainingDisplay = delayRemainingDisplay - 60000;
+                let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+                let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+                node.status(statusObj);
+                node.send([null, null, msg3, null, null]);
+              }
+
+              if (delayRemainingDisplay <= 60000) {
+                clearInterval(countdown);
+                countdown = null;
+                countdown = setInterval(function() {
+                  delayRemainingDisplay = delayRemainingDisplay - 1000;
+                  let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+                  let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+                  node.status(statusObj);
+                  node.send([null, null, msg3, null, null]);
+                }, 1000);
+              }
+            }, 60000);
+          }
+          miniTimeout = null;
+        }, delayRemainingDisplay % 60000);
+      } else {
+        countdown = setInterval(function() {
+          delayRemainingDisplay = delayRemainingDisplay - 1000;
+          let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
+          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
+          node.status(statusObj);
+          node.send([null, null, msg3, null, null]);
+        }, 1000);
+      }
+    }
+
+    // Helper: clear all active timers and intervals
+    function clearAllTimers() {
+      clearTimeout(timeout);
+      clearTimeout(miniTimeout);
+      clearInterval(countdown);
+      timeout = null;
+      countdown = null;
+      miniTimeout = null;
+    }
+
+    function handleThresholdAction() {
+      if (node.thresholdaction === "donothing" || node.thresholdcount <= 0) return;
+      if (ignoredCount % node.thresholdcount !== 0) return;
+
+      let msg5 = null;
+
+      if (node.thresholdaction === "stop") {
+        timerRunning = false;
+        timerState = "stopped";
+        stopped = true;
+        clearAllTimers();
+        deleteState();
+        msg5 = buildEventMessage("threshold_stopped");
+        ignoredCount = 0;
+        lastIgnoredTime = null;
+        let statusObj = buildStatus(null, "stopped");
+        node.status(statusObj);
+        node.send([null, null, null, null, msg5]);
+
+      } else if (node.thresholdaction === "pause") {
+        if (timerRunning) {
+          timerRunning = false;
+          timerState = "paused";
+          paused = true;
+          clearAllTimers();
+          writeState(originalMsg);
+          msg5 = buildEventMessage("threshold_paused");
+          ignoredCount = 0;
+          lastIgnoredTime = null;
+          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "paused");
+          node.status(statusObj);
+          node.send([null, null, null, null, msg5]);
+        }
+
+      } else if (node.thresholdaction === "reset") {
+        clearAllTimers();
+        delayRemainingDisplay = timerDuration;
+        timerStartTime = new Date();
+        timerState = "running";
+        timerRunning = true;
+        msg5 = buildEventMessage("threshold_reset");
+        ignoredCount = 0;
+        lastIgnoredTime = null;
+        writeState(originalMsg);
+        node.send([null, null, null, null, msg5]);
+        startTimeout(originalMsg);
+        startReporting(originalMsg);
+
+      } else if (node.thresholdaction === "addtime") {
+        let addTimeMS = node.thresholdaddtime;
+        if (node.thresholdaddtimeunits === "Second") {
+          addTimeMS = addTimeMS * 1000;
+        } else if (node.thresholdaddtimeunits === "Minute") {
+          addTimeMS = addTimeMS * 1000 * 60;
+        } else if (node.thresholdaddtimeunits === "Hour") {
+          addTimeMS = addTimeMS * 1000 * 60 * 60;
+        }
+        clearAllTimers();
+        delayRemainingDisplay = delayRemainingDisplay + addTimeMS;
+        timerState = "running";
+        timerRunning = true;
+        msg5 = buildEventMessage("threshold_time_added");
+        msg5.timeAdded = addTimeMS;
+        ignoredCount = 0;
+        lastIgnoredTime = null;
+        writeState(originalMsg);
+        node.send([null, null, null, null, msg5]);
+        startTimeout(originalMsg);
+        startReporting(originalMsg);
+
+      } else if (node.thresholdaction === "warning") {
+        msg5 = buildEventMessage("threshold_warning");
+        // Warning does not reset count or affect timer
+        node.send([null, null, null, null, msg5]);
+      }
+    }
+
     function handleInputEvent(msg) {    
       node.status({});
       let delayUnits = node.units;
       reporting = node.reporting;
 
+      // Handle query
+      if (msg.payload == "query" || msg.payload == "QUERY") {
+        let msg5 = buildEventMessage("query");
+        let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState);
+        node.status(statusObj);
+        node.send([null, null, null, null, msg5]);
+        return;
+      }
+
       // Handle pause
       if (msg.payload == "pause" || msg.payload == "PAUSE") {
         if (paused) {
-          // Already paused, send to output 4
           let msg4 = RED.util.cloneMessage(msg);
           msg4.remainingTime = delayRemainingDisplay;
           msg4.timerState = timerState;
-          node.send([null, null, null, msg4]);
+          msg4.ignoredCount = ignoredCount;
+          msg4.lastIgnoredTime = lastIgnoredTime ? lastIgnoredTime.toISOString() : null;
+          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "paused");
+          node.status(statusObj);
+          node.send([null, null, null, msg4, null]);
           return;
         }
         if (timerRunning) {
-          clearTimeout(timeout);
-          clearTimeout(miniTimeout);
-          clearInterval(countdown);
-          timeout = null;
-          countdown = null;
-          miniTimeout = null;
+          clearAllTimers();
           paused = true;
           timerRunning = false;
           timerState = "paused";
-          writeState(msg);
+          writeState(originalMsg);
           let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "paused");
           node.status(statusObj);
           let msg2 = RED.util.cloneMessage(msg);
@@ -255,7 +450,11 @@ module.exports = function(RED) {
           msg2.timerDuration = timerDuration;
           msg2.elapsedTime = getElapsedTime();
           let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-          node.send([null, msg2, msg3, null]);
+          let msg5 = buildEventMessage("paused");
+          node.send([null, msg2, msg3, null, msg5]);
+        } else {
+          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState);
+          node.status(statusObj);
         }
         return;
       }
@@ -266,83 +465,21 @@ module.exports = function(RED) {
           paused = false;
           timerRunning = true;
           timerState = "running";
-          // Recalculate timerStartTime to account for the paused period
           timerStartTime = new Date((new Date()).getTime() - (timerDuration - delayRemainingDisplay));
-          writeState(msg);
-          actualDelayRemaining = delayRemainingDisplay;
-          if (actualDelayRemaining > maxTimeout) {
-            actualDelayInUse = maxTimeout;
-            actualDelayRemaining = actualDelayRemaining - maxTimeout;
-          } else {
-            actualDelayInUse = actualDelayRemaining;
-            actualDelayRemaining = 0;
-          }
-          timeout = setTimeout(timerElapsed, actualDelayInUse, msg);
-          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-          node.status(statusObj);
+          writeState(originalMsg);
           let msg2 = RED.util.cloneMessage(msg);
           msg2.payload = "resumed";
           msg2.timerState = timerState;
           msg2.timerDuration = timerDuration;
           msg2.elapsedTime = getElapsedTime();
           let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-          node.send([null, msg2, msg3, null]);
-
-          // Restart reporting intervals if needed
-          if (reporting !== "none") {
-            if ((delayRemainingDisplay > 60000) && (reporting == "last_minute_seconds")) {
-              miniTimeout = setTimeout(function() {
-                if ((delayRemainingDisplay % 60000) != 0) {
-                  delayRemainingDisplay = delayRemainingDisplay - (delayRemainingDisplay % 60000);
-                  let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                  let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                  node.status(statusObj);
-                  node.send([null, null, msg3, null]);
-                }
-
-                if (delayRemainingDisplay <= 60000) {
-                  countdown = setInterval(function() {
-                    delayRemainingDisplay = delayRemainingDisplay - 1000;
-                    let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                    let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                    node.status(statusObj);
-                    node.send([null, null, msg3, null]);
-                  }, 1000);
-                } else {
-                  countdown = setInterval(function() {
-                    if (delayRemainingDisplay > 60000) {
-                      delayRemainingDisplay = delayRemainingDisplay - 60000;
-                      let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                      let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                      node.status(statusObj);
-                      node.send([null, null, msg3, null]);
-                    }
-
-                    if (delayRemainingDisplay <= 60000) {
-                      clearInterval(countdown);
-                      countdown = null;
-                      countdown = setInterval(function() {
-                        delayRemainingDisplay = delayRemainingDisplay - 1000;
-                        let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                        let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                        node.status(statusObj);
-                        node.send([null, null, msg3, null]);
-                      }, 1000);
-                    }
-                  }, 60000);
-                }
-                miniTimeout = null;
-              }, delayRemainingDisplay % 60000);
-            } else {
-              countdown = setInterval(function() {
-                delayRemainingDisplay = delayRemainingDisplay - 1000;
-                let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                node.status(statusObj);
-                node.send([null, null, msg3, null]);
-              }, 1000);
-            }
-          }
+          let msg5 = buildEventMessage("resumed");
+          node.send([null, msg2, msg3, null, msg5]);
+          startTimeout(originalMsg);
+          startReporting(originalMsg);
+        } else {
+          let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState);
+          node.status(statusObj);
         }
         return;
       }
@@ -356,7 +493,10 @@ module.exports = function(RED) {
         let msg4 = RED.util.cloneMessage(msg);
         msg4.remainingTime = delayRemainingDisplay;
         msg4.timerState = timerState;
-        node.send([null, null, null, msg4]);
+        msg4.ignoredCount = ignoredCount;
+        msg4.lastIgnoredTime = lastIgnoredTime ? lastIgnoredTime.toISOString() : null;
+        node.send([null, null, null, msg4, null]);
+        handleThresholdAction();
         return;
       }
 
@@ -371,17 +511,16 @@ module.exports = function(RED) {
           let msg4 = RED.util.cloneMessage(msg);
           msg4.remainingTime = delayRemainingDisplay;
           msg4.timerState = timerState;
-          node.send([null, null, null, msg4]);
+          msg4.ignoredCount = ignoredCount;
+          msg4.lastIgnoredTime = lastIgnoredTime ? lastIgnoredTime.toISOString() : null;
+          node.send([null, null, null, msg4, null]);
+          handleThresholdAction();
           return;
         }
 
         stopped = false;
         paused = false;
-        clearTimeout(timeout);
-        clearTimeout(miniTimeout);
-        clearInterval(countdown);
-        timeout = null;
-        countdown = null;
+        clearAllTimers();
 
         if (msg.payload == "stop" || msg.payload == "STOP") {
           timerRunning = false;
@@ -397,7 +536,7 @@ module.exports = function(RED) {
           deleteState();
           ignoredCount = 0;
           lastIgnoredTime = null;
-          node.send([null, msg2, msg2, null]);
+          node.send([null, msg2, msg2, null, null]);
         } else {
           msg._timerpass = true;
           if (msg.units != null) {
@@ -436,80 +575,13 @@ module.exports = function(RED) {
           timerState = "running";
           timerStartTime = new Date();
           timerDuration = delayRemainingDisplay;
+          originalMsg = msg;
 
           writeState(msg);
-          actualDelayRemaining = delayRemainingDisplay;
-          if (actualDelayRemaining > maxTimeout) {
-            actualDelayInUse = maxTimeout;
-            actualDelayRemaining = actualDelayRemaining - maxTimeout;
-          } else {
-            actualDelayInUse = actualDelayRemaining;
-            actualDelayRemaining = 0;
-          }
-          timeout = setTimeout(timerElapsed, actualDelayInUse, msg);
-
-          if (reporting == "none") {
-            let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-            node.status(statusObj);
-          } else {
-            let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-            node.status(statusObj);
-            let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-            node.send([null, null, msg3, null]);
-
-            if ((delayRemainingDisplay > 60000) && (reporting == "last_minute_seconds")) {
-              miniTimeout = setTimeout(function() {
-                if ((delayRemainingDisplay % 60000) != 0) {
-                  delayRemainingDisplay = delayRemainingDisplay - (delayRemainingDisplay % 60000);
-                  let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                  let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                  node.status(statusObj);
-                  node.send([null, null, msg3, null]);
-                }
-
-                if (delayRemainingDisplay <= 60000) {
-                  countdown = setInterval(function() {
-                    delayRemainingDisplay = delayRemainingDisplay - 1000;
-                    let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                    let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                    node.status(statusObj);
-                    node.send([null, null, msg3, null]);
-                  }, 1000);
-                } else {
-                  countdown = setInterval(function() {
-                    if (delayRemainingDisplay > 60000) {
-                      delayRemainingDisplay = delayRemainingDisplay - 60000;
-                      let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                      let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                      node.status(statusObj);
-                      node.send([null, null, msg3, null]);
-                    }
-
-                    if (delayRemainingDisplay <= 60000) {
-                      clearInterval(countdown);
-                      countdown = null;
-                      countdown = setInterval(function() {
-                        delayRemainingDisplay = delayRemainingDisplay - 1000;
-                        let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                        let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                        node.status(statusObj);
-                        node.send([null, null, msg3, null]);
-                      }, 1000);
-                    }
-                  }, 60000);
-                }
-                miniTimeout = null;
-              }, delayRemainingDisplay % 60000);
-            } else {
-              countdown = setInterval(function() {
-                delayRemainingDisplay = delayRemainingDisplay - 1000;
-                let msg3 = { payload: displayTime(delayRemainingDisplay, reportingformat), timerState: timerState, remainingTime: delayRemainingDisplay, timerDuration: timerDuration, elapsedTime: getElapsedTime() };
-                let statusObj = buildStatus(displayTime(delayRemainingDisplay, reportingformat), "running");
-                node.status(statusObj);
-                node.send([null, null, msg3, null]);
-              }, 1000);
-            }
-          }
+          let msg5 = buildEventMessage("started");
+          node.send([null, null, null, null, msg5]);
+          startTimeout(msg);
+          startReporting(msg);
         }
       } else {
         node.status({ fill: "red", shape: "ring", text: "stopped" });
@@ -540,7 +612,7 @@ module.exports = function(RED) {
           deleteState();
           ignoredCount = 0;
           lastIgnoredTime = null;
-          node.send([msg, msg2, msg3, null]);
+          node.send([msg, msg2, msg3, null, null]);
           return;
         }
         timeout = null;
@@ -588,9 +660,11 @@ module.exports = function(RED) {
             reporting: node.reporting, 
             reportingformat: node.reportingformat, 
             time: target, 
-            origmsg: msg,
+            origmsg: msg !== null ? msg : {},
             paused: paused,
             timerDuration: timerDuration,
+            timerStartTime: timerStartTime ? timerStartTime.toISOString() : null,
+            timerState: timerState,
             ignoredCount: ignoredCount,
             lastIgnoredTime: lastIgnoredTime ? lastIgnoredTime.toISOString() : null
           })));

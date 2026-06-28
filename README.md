@@ -92,6 +92,38 @@ This node is a fork of `node-red-contrib-stoptimer-varidelay` by hamsando, which
 
 ## Release Notes ##
 
+0.5.8
+- mchristegh: Fixed `writeState(null)` bug in threshold pause action that could cause decycle errors — now safely passes empty object when no message is available
+- mchristegh: Fixed reporting intervals (countdown, miniTimeout) not restarting correctly after threshold reset and addtime actions
+- mchristegh: Fixed miniTimeout partial minute edge case not being handled correctly after threshold reset and addtime actions
+- mchristegh: Extracted `startTimeout()` helper to centralize setTimeout/maxTimeout chaining logic and eliminate code duplication
+- mchristegh: Extracted `startReporting()` helper to centralize all countdown/interval reporting logic and eliminate code duplication
+- mchristegh: Extracted `clearAllTimers()` helper to centralize timer cleanup and eliminate code duplication
+- mchristegh: Added `timerStartTime` to persisted state — `msg.elapsedTime` now accurate across Node-RED restarts and redeploys
+- mchristegh: Added `timerState` to persisted state for accurate state restoration on restart
+- mchristegh: Added `ignoredCount` and `lastIgnoredTime` to persisted state for accurate threshold firing across restarts
+- mchristegh: Added `msg.timerEvent = "started"` on output 5 when timer starts or restarts
+- mchristegh: Added `msg.timerEvent = "paused"` on output 5 when timer is paused
+- mchristegh: Added `msg.timerEvent = "resumed"` on output 5 when timer is resumed
+- mchristegh: Fixed pause handler to persist original message rather than the pause command itself
+
+0.5.7
+- mchristegh: Added query message support — send `msg.payload = "query"` or `"QUERY"` to get a full snapshot of the current timer state on output 5 without affecting the timer
+- mchristegh: Added 5th output "Event" for timer events including query responses and threshold actions
+- mchristegh: Added ignored message threshold action — configurable action to take when ignored message count reaches a threshold (Do Nothing, Stop, Pause, Reset Timer, Add Time, Emit Warning)
+- mchristegh: Threshold actions fire repeatedly every N ignored messages (count resets after each action except Do Nothing and Emit Warning)
+- mchristegh: Add Time threshold action includes its own amount and units fields independent of the node's main timer units
+- mchristegh: All threshold actions send on output 5 with `msg.timerEvent` indicating the action taken
+- mchristegh: `msg.timeAdded` included on output 5 for Add Time threshold action, in milliseconds
+
+0.5.6
+- mchristegh: Fixed status blanking out when a duplicate pause message is received while already paused
+- mchristegh: Fixed status blanking out when a non-stop/resume message is received while paused
+- mchristegh: Fixed status blanking out when a resume message is received but timer is not paused
+- mchristegh: Fixed status blanking out when a pause message is received but timer is not running
+- mchristegh: Added `msg.ignoredCount` to output 4 indicating number of messages ignored during current timer run
+- mchristegh: Added `msg.lastIgnoredTime` to output 4 as an ISO 8601 timestamp of the last ignored message
+
 0.5.5
 - mchristegh: Renamed node type registration from `stoptimer-varidelay` to `stoptimer-varidelay-plus` to allow coexistence with the original `node-red-contrib-stoptimer-varidelay` package
   
