@@ -92,6 +92,9 @@ This node is a fork of `node-red-contrib-stoptimer-varidelay` by hamsando, which
 
 ## Release Notes ##
 
+0.5.5
+- mchristegh: Renamed node type registration from `stoptimer-varidelay` to `stoptimer-varidelay-plus` to allow coexistence with the original `node-red-contrib-stoptimer-varidelay` package
+  
 0.5.4
 - mchristegh: Forked from node-red-contrib-stoptimer-varidelay (hamsando) and published as node-red-contrib-stoptimer-varidelay-plus
 - mchristegh: Added pause/resume support via msg.payload of `pause`/`PAUSE` and `resume`/`RESUME`
