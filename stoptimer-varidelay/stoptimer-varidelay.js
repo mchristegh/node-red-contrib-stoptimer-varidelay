@@ -569,6 +569,8 @@ module.exports = function(RED) {
      * the ignored count resets to 0 so the threshold can fire again.
      *
      * Does nothing if thresholdaction is DONOTHING or thresholdcount is <= 0.
+     * If the timer is paused, RESET and ADDTIME actions update the remaining
+     * time but do not resume the timer — a resume message is required.
      */
     function handleThresholdAction() {
       if (node.thresholdaction === THRESHOLD_ACTION.DONOTHING || node.thresholdcount <= 0) return;
@@ -593,7 +595,8 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.PAUSE:
-          // Pause the timer at the current remaining time
+          // Pause the timer at the current remaining time.
+          // Guard against pausing an already paused timer.
           if (timerRunning) {
             timerRunning    = false;
             timerState      = TIMER_STATE.PAUSED;
@@ -609,36 +612,54 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.RESET:
-          // Restart the timer from the original duration
+          // Reset the timer to the original duration.
+          // If the timer is paused, keep it paused at the full duration —
+          // do not resume until a resume message is received.
+          // If the timer is running, restart it from the full duration.
           clearAllTimers();
           delayRemainingDisplay = timerDuration;
           timerStartTime        = new Date();
-          timerState            = TIMER_STATE.RUNNING;
-          timerRunning          = true;
           msg5                  = buildEventMessage(TIMER_EVENT.THRESHOLD_RESET);
           ignoredCount          = 0;
           lastIgnoredTime       = null;
           writeState(originalMsg);
           node.send([null, null, null, null, msg5]);
-          startTimeout(originalMsg);
-          startReporting(originalMsg);
+          if (paused) {
+            // Keep paused — just update status with new remaining time
+            node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
+          } else {
+            // Resume running from the full duration
+            timerState   = TIMER_STATE.RUNNING;
+            timerRunning = true;
+            startTimeout(originalMsg);
+            startReporting(originalMsg);
+          }
           break;
 
         case THRESHOLD_ACTION.ADDTIME:
-          // Add configured time to the remaining time and restart the timer
+          // Add configured time to the remaining time.
+          // If the timer is paused, keep it paused at the new remaining time —
+          // do not resume until a resume message is received.
+          // If the timer is running, restart it from the new remaining time.
           let addTimeMS         = convertToMilliseconds(node.thresholdaddtime, node.thresholdaddtimeunits);
           clearAllTimers();
           delayRemainingDisplay += addTimeMS;
-          timerState            = TIMER_STATE.RUNNING;
-          timerRunning          = true;
           msg5                  = buildEventMessage(TIMER_EVENT.THRESHOLD_TIME_ADDED);
           msg5.timeAdded        = addTimeMS;
           ignoredCount          = 0;
           lastIgnoredTime       = null;
           writeState(originalMsg);
           node.send([null, null, null, null, msg5]);
-          startTimeout(originalMsg);
-          startReporting(originalMsg);
+          if (paused) {
+            // Keep paused — just update status with new remaining time
+            node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
+          } else {
+            // Resume running from the new extended remaining time
+            timerState   = TIMER_STATE.RUNNING;
+            timerRunning = true;
+            startTimeout(originalMsg);
+            startReporting(originalMsg);
+          }
           break;
 
         case THRESHOLD_ACTION.WARNING:
