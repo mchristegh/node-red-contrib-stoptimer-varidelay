@@ -193,7 +193,7 @@
 
 <script type="text/x-red" data-help-name="stoptimer-varidelay-plus">
     <p><B>General usage</B><br>
-       Sends the <code>msg</code> through the first output after the set timer duration. If a new <code>msg</code> is received before the timer has ended, it will replace the existing <code>msg</code> and the timer will be restarted, unless the new <code>msg</code> has a <code>payload</code> of <code>stop</code>, <code>STOP</code>, <code>pause</code>, <code>PAUSE</code>, <code>resume</code>, <code>RESUME</code>, <code>query</code>, or <code>QUERY</code>. The second output allows you to send an additional payload of a number, string or boolean. If the timer is stopped, the second and third outputs will automatically send a payload of <code>stopped</code>. The third output will send the time remaining as time ticks away.
+       Sends the <code>msg</code> through the first output after the set timer duration. If a new <code>msg</code> is received before the timer has ended, it will replace the existing <code>msg</code> and the timer will be restarted, unless the new <code>msg</code> has a <code>payload</code> of <code>stop</code>, <code>pause</code>, <code>resume</code>, or <code>query</code>. All control commands are case insensitive — <code>stop</code>, <code>STOP</code>, and <code>Stop</code> are all accepted. The second output allows you to send an additional payload of a number, string or boolean. If the timer is stopped, the second and third outputs will automatically send a payload of <code>stopped</code>. The third output will send the time remaining as time ticks away.
     <br><br>The status below the node as well as the third output can be configured via the <I>Reporting</I> field in the node to update at a frequency of:
         <ul>
           <li>Never (default)</li>
@@ -215,63 +215,53 @@
         <li><code>msg.timerState</code> — the current state of the timer: <code>running</code>, <code>paused</code>, <code>stopped</code>, or <code>expired</code></li>
         <li><code>msg.timerDuration</code> — the original timer duration in milliseconds (outputs 1, 2, and 3)</li>
         <li><code>msg.elapsedTime</code> — the time elapsed since the timer started in milliseconds (outputs 1, 2, and 3)</li>
-        <li><code>msg.remainingTime</code> — the remaining time in milliseconds (outputs 3, 4, and 5)</li>
-        <li><code>msg.ignoredCount</code> — the number of messages ignored during the current timer run (outputs 4 and 5)</li>
-        <li><code>msg.lastIgnoredTime</code> — ISO 8601 timestamp of the last ignored message, or <code>null</code> if none (outputs 4 and 5)</li>
+        <li><code>msg.remainingTime</code> — the remaining time in milliseconds (outputs 3 and 4)</li>
+        <li><code>msg.ignoredCount</code> — the number of messages ignored during the current timer run (output 4 only)</li>
+        <li><code>msg.lastIgnoredTime</code> — ISO 8601 timestamp of the last ignored message, or <code>null</code> if none (output 4 only)</li>
       </ul>
     </p>
     <p><B>Output 5 — Event</B><br>
       Output 5 fires for the following events:
       <ul>
-        <li><b>Query</b> — when a <code>query</code> or <code>QUERY</code> message is received</li>
-        <li><b>Timer started or restarted</b> — when a new timer run begins</li>
-        <li><b>Timer paused</b> — when the timer is paused</li>
-        <li><b>Timer resumed</b> — when the timer is resumed</li>
-        <li><b>Threshold action triggered</b> — when the ignored message threshold is hit</li>
-      </ul>
-      The <code>msg.timerEvent</code> property indicates what triggered output 5:
-      <ul>
-        <li><code>started</code> — timer started or restarted</li>
-        <li><code>paused</code> — timer was paused</li>
-        <li><code>resumed</code> — timer was resumed</li>
-        <li><code>query</code> — response to a query message</li>
-        <li><code>threshold_stopped</code> — threshold action stopped the timer</li>
-        <li><code>threshold_paused</code> — threshold action paused the timer</li>
-        <li><code>threshold_reset</code> — threshold action reset the timer</li>
-        <li><code>threshold_time_added</code> — threshold action added time to the timer</li>
-        <li><code>threshold_warning</code> — warning threshold hit, no action taken on timer</li>
+        <li><b>Timer started or restarted</b> — <code>msg.timerEvent = "started"</code></li>
+        <li><b>Timer paused</b> — <code>msg.timerEvent = "paused"</code></li>
+        <li><b>Timer resumed</b> — <code>msg.timerEvent = "resumed"</code></li>
+        <li><b>Query received</b> — <code>msg.timerEvent = "query"</code></li>
+        <li><b>Threshold action triggered</b> — <code>msg.timerEvent</code> is one of <code>threshold_stopped</code>, <code>threshold_paused</code>, <code>threshold_reset</code>, <code>threshold_time_added</code>, or <code>threshold_warning</code></li>
       </ul>
       For <code>threshold_time_added</code> events, <code>msg.timeAdded</code> contains the amount of time added in milliseconds.
     </p>
     <p><B>Querying the timer</B><br>
-      Send a message with <code>msg.payload</code> of <code>query</code> or <code>QUERY</code> to get a full snapshot of the current timer state on output 5. The timer is not affected in any way by a query message.
+      Send a message with <code>msg.payload</code> of <code>query</code> (any case) to get a full snapshot of the current timer state on output 5. The timer is not affected in any way by a query message.
     </p>
     <p><B>Overriding the node via incoming messages</B><br>
       If the input contains <code>msg.delay</code>, then the delay will be <code>msg.delay</code> units of time, where the units are whatever the units are defaulted to in the node itself. In the absence of a <code>msg.delay</code>, or a value in <code>msg.delay</code> that cannot be converted to an int, the value configured within the node will be used. If the value of <code>msg.delay</code> is less than 0, then 0 is used.
     </p>
     <p>
-      If the input contains <code>msg.units</code>, with a value of "Milliseconds", "Seconds", "Minutes" or "Hours" then that will override what is defaulted in the node. In the absence of a <code>msg.units</code>, or an unknown string in <code>msg.units</code>, the units configured within the node will be used. In the case of an unknown string, a warning message will appear in the Debug logs.
+      If the input contains <code>msg.units</code>, with a value of "milliseconds", "seconds", "minutes" or "hours" then that will override what is defaulted in the node. Both singular and plural forms are accepted and the value is case insensitive. In the absence of a <code>msg.units</code>, or an unknown string in <code>msg.units</code>, the units configured within the node will be used. In the case of an unknown string, a warning message will appear in the Debug logs.
     </p>
     <p><b>Pausing and Resuming</b><br>
-      The timer can be paused by sending a message with <code>msg.payload</code> of <code>pause</code> or <code>PAUSE</code>. While paused:
+      The timer can be paused by sending a message with <code>msg.payload</code> of <code>pause</code> (any case). While paused:
       <ul>
         <li>The countdown is frozen at the remaining time</li>
         <li>The node status shows <code>Paused: HH:MM:SS</code> with a yellow indicator</li>
         <li>Outputs 2 and 3 will send a payload of <code>paused</code></li>
-        <li>Any incoming message other than <code>resume</code>, <code>RESUME</code>, <code>stop</code>, or <code>STOP</code> will be routed to output 4</li>
+        <li>Output 5 sends <code>msg.timerEvent = "paused"</code></li>
+        <li>Any incoming message other than <code>resume</code> or <code>stop</code> (any case) will be routed to output 4</li>
         <li>Sending another <code>pause</code> message while already paused will also be routed to output 4</li>
         <li>Sending a <code>pause</code> message when the timer is not running will be ignored and the current status restored</li>
       </ul>
-      The timer can be resumed by sending a message with <code>msg.payload</code> of <code>resume</code> or <code>RESUME</code>. On resume:
+      The timer can be resumed by sending a message with <code>msg.payload</code> of <code>resume</code> (any case). On resume:
       <ul>
         <li>The countdown restarts from where it was frozen</li>
         <li>Outputs 2 and 3 will send a payload of <code>resumed</code></li>
+        <li>Output 5 sends <code>msg.timerEvent = "resumed"</code></li>
         <li>Sending a <code>resume</code> message when the timer is not paused will be ignored and the current status restored</li>
       </ul>
       If the <i>Resume timer on deploy/restart</i> option is enabled and the timer is paused when Node-RED restarts or the flow is redeployed, the timer will restore as paused at the same remaining time.
     </p>
     <p><b>Ignored Message Threshold Action</b><br>
-      When <i>Do Not Reset Timer on Subsequent Incoming Message</i> is enabled, you can configure an automatic action to take when the ignored message count reaches a threshold. The threshold action is configured via the <i>Ignored Message Threshold Action</i> dropdown:
+      When <i>Do Not Reset Timer on Subsequent Incoming Message</i> is enabled, you can configure an automatic action to take when the ignored message count reaches a configured threshold. The threshold action is configured via the <i>Ignored Message Threshold Action</i> dropdown:
       <ul>
         <li><b>Do Nothing (default)</b> — no action taken, count increments indefinitely</li>
         <li><b>Stop</b> — stops the timer when the threshold is reached</li>
@@ -281,8 +271,6 @@
         <li><b>Emit Warning</b> — sends a warning on output 5 without affecting the timer</li>
       </ul>
       For all actions except Do Nothing and Emit Warning, the ignored count resets to 0 after the action fires, allowing the threshold to trigger again after another N ignored messages.
-      <br><br>
-      The threshold count field sets how many ignored messages trigger the action. For Add Time, additional fields allow you to configure the amount and units of time to add.
       <br><br>
       All threshold actions send a message on output 5 with <code>msg.timerEvent</code> indicating what action was taken.
     </p>
@@ -304,7 +292,7 @@
       <code>_timerpass</code> is set to <code>true</code> when the timer expires.
       <br><br>
       <b>What does <code>_timerpass</code> do?</b><br>
-      If stoptimer has at any point been stopped using message.payload=stop (or STOP) AND <br>
+      If stoptimer has at any point been stopped using message.payload=stop (any case) AND <br>
       If stoptimer has not received a message with _timerpass not set since that time THEN <br>
       any incoming message that has the _timerpass=true property will die within stoptimer with no output.
       <br><br>
@@ -318,7 +306,7 @@
       By default, this option is not enabled in order to preserve compatibility with any existing flows. Note that you may need to refresh the web UI after updating the node in order to see the new "ignore timerpass" option.
     </p>
     <p><b>Do Not Reset Timer on Subsequent Incoming Message</b><br>
-      This option is <b>DISABLED</b> by default. If you <i>ENABLE</i> it (check the checkbox) then while the timer is running, any subsequent incoming messages (other than <code>stop</code>, <code>STOP</code>, <code>pause</code>, <code>PAUSE</code>, <code>resume</code>, <code>RESUME</code>, <code>query</code>, or <code>QUERY</code>) will be ignored and the timer will continue running undisturbed. The first message always starts the timer normally.
+      This option is <b>DISABLED</b> by default. If you <i>ENABLE</i> it (check the checkbox) then while the timer is running, any subsequent incoming messages (other than control commands) will be ignored and the timer will continue running undisturbed. The first message always starts the timer normally.
       <br><br>
       When a message is ignored, it will be sent to the 4th output with the original message content intact plus:
       <ul>
