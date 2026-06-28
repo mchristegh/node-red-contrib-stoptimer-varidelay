@@ -623,5 +623,5 @@ module.exports = function(RED) {
       }
     }
   }
-  RED.nodes.registerType("stoptimer-varidelay", StopTimerVariDelay);
+  RED.nodes.registerType("stoptimer-varidelay-plus", StopTimerVariDelay);
 }
