@@ -25,8 +25,6 @@ module.exports = function(RED) {
 
   // ---------------------------------------------------------------------------
   // Module-level constants
-  // Defined once at module level so they are shared across all node instances
-  // rather than recreated for each node.
   // ---------------------------------------------------------------------------
 
   /** Timer state values used in timerState variable and msg.timerState */
@@ -43,6 +41,11 @@ module.exports = function(RED) {
     PAUSED:               "paused",
     RESUMED:              "resumed",
     QUERY:                "query",
+    LOCKED:               "locked",
+    UNLOCKED:             "unlocked",
+    TIMEADJUSTED:         "timeadjusted",
+    TIMESET:              "timeset",
+    DURATIONSET:          "durationset",
     THRESHOLD_STOPPED:    "threshold_stopped",
     THRESHOLD_PAUSED:     "threshold_paused",
     THRESHOLD_RESET:      "threshold_reset",
@@ -88,10 +91,15 @@ module.exports = function(RED) {
    * msg.payload is lowercased before comparison so these are case insensitive.
    */
   const PAYLOAD = {
-    STOP:   "stop",
-    PAUSE:  "pause",
-    RESUME: "resume",
-    QUERY:  "query"
+    STOP:        "stop",
+    PAUSE:       "pause",
+    RESUME:      "resume",
+    QUERY:       "query",
+    LOCK:        "lock",
+    UNLOCK:      "unlock",
+    ADJUSTTIME:  "adjusttime",
+    SETTIME:     "settime",
+    SETDURATION: "setduration"
   };
 
   /** Reporting format values as stored in the node configuration */
@@ -128,9 +136,6 @@ module.exports = function(RED) {
     let nodepath = "";
     require('./cycle.js');
 
-    // Build the path to the persistent state file.
-    // If the node is inside a subflow, incorporate the subflow path
-    // into the filename to ensure uniqueness across subflow instances.
     if (n._alias != null) {
       nodepath = n._flow.path.replace(/\//g, "-") + "-";
       nodefile = n._alias;
@@ -140,7 +145,6 @@ module.exports = function(RED) {
 
     // -------------------------------------------------------------------------
     // Node property initialization
-    // Read configuration values from the node config object with safe defaults.
     // -------------------------------------------------------------------------
 
     this.units                 = n.units                 || UNITS.SECOND;
@@ -159,7 +163,6 @@ module.exports = function(RED) {
     this.thresholdaddtimeunits = n.thresholdaddtimeunits || UNITS.SECOND;
 
     // Convert the configured duration to milliseconds for internal use.
-    // Millisecond durations are used as-is.
     if (this.duration <= 0) {
       this.duration = 0;
     } else {
@@ -184,38 +187,36 @@ module.exports = function(RED) {
 
     // -------------------------------------------------------------------------
     // Runtime state variables
-    // These track the current state of the timer and are updated as the
-    // timer runs, pauses, stops, and expires.
     // -------------------------------------------------------------------------
 
-    let timeout               = null;    // Main setTimeout handle
-    let miniTimeout           = null;    // setTimeout handle for partial minute interval
-    let countdown             = null;    // setInterval handle for reporting countdown
-    let stopped               = false;   // True if timer was explicitly stopped
-    let paused                = false;   // True if timer is currently paused
-    let delayRemainingDisplay = 0;       // Current remaining time in milliseconds
-    let delayFactor           = 1000;    // Multiplier to convert msg.delay to milliseconds
+    let timeout               = null;
+    let miniTimeout           = null;
+    let countdown             = null;
+    let stopped               = false;
+    let paused                = false;
+    let delayRemainingDisplay = 0;
+    let delayFactor           = 1000;
     let reporting             = this.reporting;
     let reportingformat       = this.reportingformat;
 
-    /** Maximum duration for a single setTimeout call (~24.8 days in ms) */
     const maxTimeout = 2147483647;
-    let actualDelayInUse      = 0;       // Duration of the current setTimeout call
-    let actualDelayRemaining  = 0;       // Remaining time after current setTimeout
+    let actualDelayInUse      = 0;
+    let actualDelayRemaining  = 0;
 
-    let ignoredCount          = 0;       // Count of ignored messages in this timer run
-    let lastIgnoredTime       = null;    // Date of the last ignored message
-    let timerRunning          = false;   // True if timer is actively counting down
-    let timerState            = TIMER_STATE.STOPPED; // Current timer state string
-    let timerStartTime        = null;    // Date when the current timer run started
-    let timerDuration         = 0;       // Original duration of the current timer run in ms
-    let originalMsg           = null;    // The message that started the current timer run
+    let ignoredCount          = 0;
+    let lastIgnoredTime       = null;
+    let timerRunning          = false;
+    let timerState            = TIMER_STATE.STOPPED;
+    let timerStartTime        = null;
+    let timerDuration         = 0;
+    let originalMsg           = null;
+
+    // overrideDuration — set by setduration command, used as duration for all
+    // future runs until node is redeployed. null means use node.duration.
+    let overrideDuration      = null;
 
     // -------------------------------------------------------------------------
     // Persist restore
-    // If persistence is enabled and a state file exists, restore the timer
-    // state from disk. This allows the timer to survive Node-RED restarts
-    // and flow redeploys.
     // -------------------------------------------------------------------------
 
     if (this.persist === true) {
@@ -230,27 +231,22 @@ module.exports = function(RED) {
             ? savedState.reportingformat.toString()
             : REPORTING_FORMAT.HUMAN;
 
-          // Restore ignored message tracking
           if (typeof savedState.ignoredCount    !== 'undefined') ignoredCount    = savedState.ignoredCount;
           if (typeof savedState.lastIgnoredTime !== 'undefined' && savedState.lastIgnoredTime !== null) {
             lastIgnoredTime = new Date(savedState.lastIgnoredTime);
           }
-
-          // Restore timer start time for accurate elapsedTime after restart
           if (typeof savedState.timerStartTime !== 'undefined' && savedState.timerStartTime !== null) {
             timerStartTime = new Date(savedState.timerStartTime);
           }
-
-          // Restore timer state string
-          if (typeof savedState.timerState !== 'undefined') timerState = savedState.timerState;
+          if (typeof savedState.timerState     !== 'undefined') timerState          = savedState.timerState;
+          if (typeof savedState.donotresettimer !== 'undefined') node.donotresettimer = savedState.donotresettimer;
+          if (typeof savedState.overrideDuration !== 'undefined' && savedState.overrideDuration !== null) {
+            overrideDuration = savedState.overrideDuration;
+          }
 
           if (savedState.paused === true) {
-            // Restore as paused — calculate remaining time and set paused state.
-            // If remaining time is zero or negative, use a short random delay
-            // to allow Node-RED to finish initializing before firing.
             let remainingMS = targetMS - nowMS;
             if (remainingMS <= 0) remainingMS = (Math.floor((Math.random() * 5) + 3) * 1000);
-
             delayRemainingDisplay = remainingMS;
             timerDuration  = typeof savedState.timerDuration !== 'undefined' ? savedState.timerDuration : remainingMS;
             timerStartTime = new Date(nowMS - (timerDuration - remainingMS));
@@ -259,10 +255,6 @@ module.exports = function(RED) {
             timerState     = TIMER_STATE.PAUSED;
             node.status(buildStatus(displayTime(delayRemainingDisplay, node.reportingformat), TIMER_STATE.PAUSED));
           } else {
-            // Restore as running — adjust remaining time to account for downtime.
-            // If less than 3 seconds remain, use a random 3-8 second delay to
-            // prevent all timers from firing simultaneously on restart and to
-            // allow downstream nodes time to initialize.
             if ((targetMS - nowMS) <= 3000) {
               targetMS = (Math.floor((Math.random() * 5) + 3) * 1000);
             } else {
@@ -278,7 +270,6 @@ module.exports = function(RED) {
         this.error("Error processing persistent file data for stoptimer-varidelay node " + n.id.toString() + "\n\n" + error.toString());
       }
     } else {
-      // Persistence is disabled — delete any leftover state file.
       deleteState();
     }
 
@@ -305,12 +296,10 @@ module.exports = function(RED) {
 
     /**
      * Builds a Node-RED status object for the current timer state.
-     * When donotresettimer is enabled, the status includes the ignored
-     * message count and last ignored timestamp.
      *
-     * @param {string|null} timeDisplay - Formatted time string or null for stopped/expired
+     * @param {string|null} timeDisplay - Formatted time string or null
      * @param {string}      state       - One of the TIMER_STATE values
-     * @returns {object} Node-RED status object with fill, shape, and text properties
+     * @returns {object} Node-RED status object
      */
     function buildStatus(timeDisplay, state) {
       if (state === TIMER_STATE.STOPPED || state === TIMER_STATE.EXPIRED) {
@@ -336,7 +325,6 @@ module.exports = function(RED) {
         return { fill: "yellow", shape: "ring", text: "Paused: " + timeDisplay };
       }
 
-      // Running state
       if (node.donotresettimer) {
         let lastStr = lastIgnoredTime ? formatIgnoredTime(lastIgnoredTime) : "--";
         return { fill: "green", shape: "dot", text: "Remaining: " + timeDisplay + " | Ignored: " + ignoredCount + ", Last: " + lastStr };
@@ -356,16 +344,15 @@ module.exports = function(RED) {
      */
     function formatIgnoredTime(date) {
       const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      return months[date.getMonth()]                          + " " +
-             String(date.getDate()).padStart(2, "0")          + " " +
-             String(date.getHours()).padStart(2, "0")         + ":" +
-             String(date.getMinutes()).padStart(2, "0")       + ":" +
+      return months[date.getMonth()]                    + " " +
+             String(date.getDate()).padStart(2, "0")    + " " +
+             String(date.getHours()).padStart(2, "0")   + ":" +
+             String(date.getMinutes()).padStart(2, "0") + ":" +
              String(date.getSeconds()).padStart(2, "0");
     }
 
     /**
      * Returns the number of milliseconds elapsed since the timer started.
-     * Returns 0 if the timer has not been started.
      *
      * @returns {number} Elapsed time in milliseconds
      */
@@ -392,21 +379,49 @@ module.exports = function(RED) {
     }
 
     /**
+     * Normalizes a units string from an incoming message to a UNITS_INPUT value.
+     * Lowercases and strips trailing 's' so both singular and plural forms work.
+     *
+     * @param {string} units - The units string to normalize
+     * @returns {string} Normalized units string
+     */
+    function normalizeUnits(units) {
+      return typeof units === 'string' ? units.toLowerCase().replace(/s$/, '') : null;
+    }
+
+    /**
+     * Converts a message-provided value and optional units to milliseconds.
+     * If units are not provided or not recognized, defaults to milliseconds.
+     *
+     * @param {number} value - The duration value
+     * @param {string} units - Optional normalized units string
+     * @returns {number} Duration in milliseconds
+     */
+    function msgValueToMs(value, units) {
+      switch (units) {
+        case UNITS_INPUT.SECOND: return value * 1000;
+        case UNITS_INPUT.MINUTE: return value * 1000 * 60;
+        case UNITS_INPUT.HOUR:   return value * 1000 * 60 * 60;
+        default:                 return value; // milliseconds or unknown
+      }
+    }
+
+    /**
      * Builds an output 5 event message with a full state snapshot.
-     * All output 5 messages share this common set of properties.
      *
      * @param {string} timerEvent - One of the TIMER_EVENT values
      * @returns {object} Event message object ready to send on output 5
      */
     function buildEventMessage(timerEvent) {
       return {
-        timerEvent:      timerEvent,
-        timerState:      timerState,
-        remainingTime:   delayRemainingDisplay,
-        timerDuration:   timerDuration,
-        elapsedTime:     getElapsedTime(),
-        ignoredCount:    ignoredCount,
-        lastIgnoredTime: lastIgnoredTime ? lastIgnoredTime.toISOString() : null
+        timerEvent:       timerEvent,
+        timerState:       timerState,
+        remainingTime:    delayRemainingDisplay,
+        timerDuration:    timerDuration,
+        elapsedTime:      getElapsedTime(),
+        ignoredCount:     ignoredCount,
+        lastIgnoredTime:  lastIgnoredTime ? lastIgnoredTime.toISOString() : null,
+        doNotResetTimer:  node.donotresettimer
       };
     }
 
@@ -416,7 +431,6 @@ module.exports = function(RED) {
 
     /**
      * Clears all active timeouts and intervals.
-     * Called whenever the timer needs to be stopped, paused, or restarted.
      */
     function clearAllTimers() {
       clearTimeout(timeout);
@@ -429,8 +443,7 @@ module.exports = function(RED) {
 
     /**
      * Starts the main timer setTimeout chain from the current delayRemainingDisplay.
-     * Handles durations longer than the JavaScript setTimeout maximum (~24.8 days)
-     * by chaining multiple setTimeout calls.
+     * Handles durations longer than maxTimeout by chaining multiple setTimeout calls.
      *
      * @param {object} msg - The message to pass to timerElapsed when the timer fires
      */
@@ -448,14 +461,7 @@ module.exports = function(RED) {
 
     /**
      * Starts or restarts the reporting countdown intervals from the current
-     * delayRemainingDisplay value. Handles three reporting modes:
-     * - NONE: updates status once, no interval
-     * - EVERY_SECOND: updates every second
-     * - LAST_MINUTE_SECONDS: updates every minute until the last minute,
-     *   then switches to every second. Handles non-minute-increment durations
-     *   by consuming the partial minute first via a miniTimeout.
-     *
-     * Also sends the initial time remaining message on output 3.
+     * delayRemainingDisplay value.
      *
      * @param {object} msg - The original message (unused but kept for consistency)
      */
@@ -465,7 +471,6 @@ module.exports = function(RED) {
         return;
       }
 
-      // Send initial status and output 3 message
       node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.RUNNING));
       node.send([null, null, {
         payload:       displayTime(delayRemainingDisplay, reportingformat),
@@ -476,9 +481,6 @@ module.exports = function(RED) {
       }, null, null]);
 
       if ((delayRemainingDisplay > 60000) && (reporting === REPORTING.LAST_MINUTE_SECONDS)) {
-        // Handle non-minute-increment durations by consuming the partial minute first,
-        // then switch to normal minute intervals until the last minute,
-        // then switch to second intervals.
         miniTimeout = setTimeout(function() {
           if ((delayRemainingDisplay % 60000) !== 0) {
             delayRemainingDisplay -= (delayRemainingDisplay % 60000);
@@ -493,7 +495,6 @@ module.exports = function(RED) {
           }
 
           if (delayRemainingDisplay <= 60000) {
-            // Already in last minute — start second interval immediately
             countdown = setInterval(function() {
               delayRemainingDisplay -= 1000;
               node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.RUNNING));
@@ -506,7 +507,6 @@ module.exports = function(RED) {
               }, null, null]);
             }, 1000);
           } else {
-            // Start minute interval, switching to second interval in the last minute
             countdown = setInterval(function() {
               if (delayRemainingDisplay > 60000) {
                 delayRemainingDisplay -= 60000;
@@ -520,7 +520,6 @@ module.exports = function(RED) {
                 }, null, null]);
               }
               if (delayRemainingDisplay <= 60000) {
-                // Switch from minute to second interval for the last minute
                 clearInterval(countdown);
                 countdown = null;
                 countdown = setInterval(function() {
@@ -541,7 +540,6 @@ module.exports = function(RED) {
         }, delayRemainingDisplay % 60000);
 
       } else {
-        // EVERY_SECOND mode — simple 1 second interval
         countdown = setInterval(function() {
           delayRemainingDisplay -= 1000;
           node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.RUNNING));
@@ -563,14 +561,6 @@ module.exports = function(RED) {
     /**
      * Evaluates whether the ignored message count has reached the configured
      * threshold and executes the configured action if so.
-     *
-     * The threshold fires every time ignoredCount is an exact multiple of
-     * thresholdcount. After firing (except for WARNING and DONOTHING),
-     * the ignored count resets to 0 so the threshold can fire again.
-     *
-     * Does nothing if thresholdaction is DONOTHING or thresholdcount is <= 0.
-     * If the timer is paused, RESET and ADDTIME actions update the remaining
-     * time but do not resume the timer — a resume message is required.
      */
     function handleThresholdAction() {
       if (node.thresholdaction === THRESHOLD_ACTION.DONOTHING || node.thresholdcount <= 0) return;
@@ -581,7 +571,6 @@ module.exports = function(RED) {
       switch (node.thresholdaction) {
 
         case THRESHOLD_ACTION.STOP:
-          // Stop the timer completely
           timerRunning    = false;
           timerState      = TIMER_STATE.STOPPED;
           stopped         = true;
@@ -595,8 +584,6 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.PAUSE:
-          // Pause the timer at the current remaining time.
-          // Guard against pausing an already paused timer.
           if (timerRunning) {
             timerRunning    = false;
             timerState      = TIMER_STATE.PAUSED;
@@ -612,10 +599,6 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.RESET:
-          // Reset the timer to the original duration.
-          // If the timer is paused, keep it paused at the full duration —
-          // do not resume until a resume message is received.
-          // If the timer is running, restart it from the full duration.
           clearAllTimers();
           delayRemainingDisplay = timerDuration;
           timerStartTime        = new Date();
@@ -625,10 +608,8 @@ module.exports = function(RED) {
           writeState(originalMsg);
           node.send([null, null, null, null, msg5]);
           if (paused) {
-            // Keep paused — just update status with new remaining time
             node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
           } else {
-            // Resume running from the full duration
             timerState   = TIMER_STATE.RUNNING;
             timerRunning = true;
             startTimeout(originalMsg);
@@ -637,10 +618,6 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.ADDTIME:
-          // Add configured time to the remaining time.
-          // If the timer is paused, keep it paused at the new remaining time —
-          // do not resume until a resume message is received.
-          // If the timer is running, restart it from the new remaining time.
           let addTimeMS         = convertToMilliseconds(node.thresholdaddtime, node.thresholdaddtimeunits);
           clearAllTimers();
           delayRemainingDisplay += addTimeMS;
@@ -651,10 +628,8 @@ module.exports = function(RED) {
           writeState(originalMsg);
           node.send([null, null, null, null, msg5]);
           if (paused) {
-            // Keep paused — just update status with new remaining time
             node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
           } else {
-            // Resume running from the new extended remaining time
             timerState   = TIMER_STATE.RUNNING;
             timerRunning = true;
             startTimeout(originalMsg);
@@ -663,7 +638,6 @@ module.exports = function(RED) {
           break;
 
         case THRESHOLD_ACTION.WARNING:
-          // Send a warning on output 5 without affecting the timer or resetting the count
           msg5 = buildEventMessage(TIMER_EVENT.THRESHOLD_WARNING);
           node.send([null, null, null, null, msg5]);
           break;
@@ -676,48 +650,146 @@ module.exports = function(RED) {
 
     /**
      * Main input handler. Called for every message received by the node.
-     * Normalizes msg.payload and msg.units to lowercase before comparison
-     * to make all command matching case insensitive.
      *
      * Processing order:
-     * 1. query   — return state snapshot on output 5, no timer effect
-     * 2. pause   — freeze the countdown
-     * 3. resume  — restart the countdown from the frozen point
-     * 4. paused gate — while paused, non-stop messages go to output 4
-     * 5. _timerpass gate — drop messages when stopped and _timerpass is set
-     * 6. donotresettimer gate — ignore messages while running if enabled
-     * 7. stop    — cancel the timer
-     * 8. default — start or restart the timer
+     * 1. query       — return state snapshot, no timer effect
+     * 2. lock        — enable donotresettimer at runtime
+     * 3. unlock      — disable donotresettimer at runtime
+     * 4. adjusttime  — adjust remaining time (running/paused only)
+     * 5. settime     — set remaining time to exact value (running/paused only)
+     * 6. setduration — set duration for all future runs
+     * 7. pause       — freeze the countdown
+     * 8. resume      — restart from frozen point
+     * 9. paused gate — non-stop messages go to output 4 while paused
+     * 10. _timerpass gate — drop when stopped and _timerpass set
+     * 11. donotresettimer gate — ignore while running if enabled
+     * 12. stop       — cancel the timer
+     * 13. default    — start or restart the timer
      *
      * @param {object} msg - The incoming Node-RED message
      */
     function handleInputEvent(msg) {
       node.status({});
 
-      // Normalize msg.payload to lowercase for case-insensitive command matching.
-      // Only normalize string payloads — numeric/boolean payloads pass through unchanged.
       const msgPayload = typeof msg.payload === 'string' ? msg.payload.toLowerCase() : msg.payload;
-
-      // Normalize msg.units to lowercase singular for case-insensitive unit matching.
-      // Strips trailing 's' so "seconds" and "second" both match UNITS_INPUT.SECOND.
-      const msgUnits = typeof msg.units === 'string' ? msg.units.toLowerCase().replace(/s$/, '') : null;
+      const msgUnits   = normalizeUnits(msg.units);
 
       reporting       = node.reporting;
       reportingformat = node.reportingformat;
 
       // -- Query -----------------------------------------------------------
-      // Return a full state snapshot on output 5 without affecting the timer.
       if (msgPayload === PAYLOAD.QUERY) {
         node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
         node.send([null, null, null, null, buildEventMessage(TIMER_EVENT.QUERY)]);
         return;
       }
 
+      // -- Lock ------------------------------------------------------------
+      if (msgPayload === PAYLOAD.LOCK) {
+        node.donotresettimer = true;
+        ignoredCount         = 0;
+        lastIgnoredTime      = null;
+        writeState(originalMsg);
+        node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+        node.send([null, null, null, null, buildEventMessage(TIMER_EVENT.LOCKED)]);
+        return;
+      }
+
+      // -- Unlock ----------------------------------------------------------
+      if (msgPayload === PAYLOAD.UNLOCK) {
+        node.donotresettimer = false;
+        ignoredCount         = 0;
+        lastIgnoredTime      = null;
+        writeState(originalMsg);
+        node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+        node.send([null, null, null, null, buildEventMessage(TIMER_EVENT.UNLOCKED)]);
+        return;
+      }
+
+      // -- Adjust Time -----------------------------------------------------
+      // Adds or subtracts from the current remaining time.
+      // Only works when running or paused. If result is <= 0, sets to 0.
+      if (msgPayload === PAYLOAD.ADJUSTTIME) {
+        if (timerRunning || paused) {
+          let adjustUnits = normalizeUnits(msg.adjusttimeunits);
+          let adjustMS    = msgValueToMs(msg.adjusttime, adjustUnits);
+          delayRemainingDisplay = Math.max(0, delayRemainingDisplay + adjustMS);
+          let msg5        = buildEventMessage(TIMER_EVENT.TIMEADJUSTED);
+          msg5.timeAdjusted = adjustMS;
+          writeState(originalMsg);
+          if (paused) {
+            // Stay paused, just update status
+            node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
+          } else {
+            // Restart timer from new remaining time
+            clearAllTimers();
+            startTimeout(originalMsg);
+            startReporting(originalMsg);
+          }
+          node.send([null, null, null, null, msg5]);
+        } else {
+          // Not running or paused — ignore and restore status
+          node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+        }
+        return;
+      }
+
+      // -- Set Time --------------------------------------------------------
+      // Sets the current remaining time to an exact value.
+      // Only works when running or paused. Must be positive.
+      if (msgPayload === PAYLOAD.SETTIME) {
+        if (timerRunning || paused) {
+          let setUnits = normalizeUnits(msg.settimeunits);
+          let setMS    = msgValueToMs(msg.settime, setUnits);
+          if (setMS <= 0) {
+            node.warn("settime value must be positive, ignoring");
+            node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+            return;
+          }
+          delayRemainingDisplay = setMS;
+          let msg5      = buildEventMessage(TIMER_EVENT.TIMESET);
+          msg5.timeSet  = setMS;
+          writeState(originalMsg);
+          if (paused) {
+            // Stay paused, just update status
+            node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), TIMER_STATE.PAUSED));
+          } else {
+            // Restart timer from new remaining time
+            clearAllTimers();
+            startTimeout(originalMsg);
+            startReporting(originalMsg);
+          }
+          node.send([null, null, null, null, msg5]);
+        } else {
+          // Not running or paused — ignore and restore status
+          node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+        }
+        return;
+      }
+
+      // -- Set Duration ----------------------------------------------------
+      // Sets node.duration for all future runs. Does not affect current run.
+      // Works in all states. Must be positive.
+      if (msgPayload === PAYLOAD.SETDURATION) {
+        let durUnits  = normalizeUnits(msg.setdurationunits);
+        let durMS     = msgValueToMs(msg.setduration, durUnits);
+        if (durMS <= 0) {
+          node.warn("setduration value must be positive, ignoring");
+          node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+          return;
+        }
+        overrideDuration  = durMS;
+        let msg5          = buildEventMessage(TIMER_EVENT.DURATIONSET);
+        msg5.durationSet  = durMS;
+        writeState(originalMsg);
+        node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
+        node.send([null, null, null, null, msg5]);
+        return;
+      }
+
       // -- Pause -----------------------------------------------------------
-      // Freeze the countdown at the current remaining time.
       if (msgPayload === PAYLOAD.PAUSE) {
         if (paused) {
-          // Already paused — route the duplicate pause to output 4
           let msg4             = RED.util.cloneMessage(msg);
           msg4.remainingTime   = delayRemainingDisplay;
           msg4.timerState      = timerState;
@@ -748,20 +820,17 @@ module.exports = function(RED) {
           };
           node.send([null, msg2, msg3, null, buildEventMessage(TIMER_EVENT.PAUSED)]);
         } else {
-          // Timer not running — restore current status
           node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
         }
         return;
       }
 
       // -- Resume ----------------------------------------------------------
-      // Restart the countdown from the frozen remaining time.
       if (msgPayload === PAYLOAD.RESUME) {
         if (paused) {
           paused         = false;
           timerRunning   = true;
           timerState     = TIMER_STATE.RUNNING;
-          // Recalculate timerStartTime to account for the time spent paused
           timerStartTime = new Date((new Date()).getTime() - (timerDuration - delayRemainingDisplay));
           writeState(originalMsg);
           let msg2           = RED.util.cloneMessage(msg);
@@ -780,15 +849,12 @@ module.exports = function(RED) {
           startTimeout(originalMsg);
           startReporting(originalMsg);
         } else {
-          // Not paused — restore current status
           node.status(buildStatus(displayTime(delayRemainingDisplay, reportingformat), timerState));
         }
         return;
       }
 
       // -- Paused gate -----------------------------------------------------
-      // While paused, any non-stop message is routed to output 4.
-      // The timer must be explicitly resumed — it cannot be restarted while paused.
       if (paused && msgPayload !== PAYLOAD.STOP) {
         ignoredCount++;
         lastIgnoredTime      = new Date();
@@ -804,15 +870,9 @@ module.exports = function(RED) {
       }
 
       // -- _timerpass gate -------------------------------------------------
-      // Legacy behavior: if the timer was stopped and a message arrives with
-      // _timerpass=true, drop it silently. This prevents timer expiry messages
-      // from restarting a stopped timer in looped flows.
-      // Can be disabled via the ignoretimerpass checkbox.
       if (stopped === false || msg._timerpass !== true || node.ignoretimerpass === true) {
 
         // -- donotresettimer gate ------------------------------------------
-        // When enabled, ignore non-control messages while the timer is running.
-        // Ignored messages are routed to output 4 with additional properties.
         if (node.donotresettimer && timerRunning && msgPayload !== PAYLOAD.STOP && msg._timerpass !== true) {
           ignoredCount++;
           lastIgnoredTime      = new Date();
@@ -832,7 +892,6 @@ module.exports = function(RED) {
         clearAllTimers();
 
         // -- Stop ----------------------------------------------------------
-        // Cancel the timer and notify downstream nodes.
         if (msgPayload === PAYLOAD.STOP) {
           timerRunning       = false;
           timerState         = TIMER_STATE.STOPPED;
@@ -851,11 +910,8 @@ module.exports = function(RED) {
         }
 
         // -- Start / Restart -----------------------------------------------
-        // Start a new timer run. If the timer was already running,
-        // clearAllTimers() above has cancelled it and this starts fresh.
         msg._timerpass = true;
 
-        // Determine the delay factor (ms per unit) from msg.units or node config
         if (msgUnits !== null) {
           switch (msgUnits) {
             case UNITS_INPUT.MILLISECOND: delayFactor = 1;                break;
@@ -870,14 +926,15 @@ module.exports = function(RED) {
           delayFactor = convertToMilliseconds(1, node.units);
         }
 
-        // Set the delay from msg.delay if provided, otherwise use node config duration
         if ((msg.delay != null) && (!isNaN(parseInt(msg.delay, 10)))) {
           delayRemainingDisplay = msg.delay * delayFactor;
         } else {
-          delayRemainingDisplay = node.duration;
+          // Use overrideDuration if set, otherwise use node configured duration.
+          // overrideDuration is cleared after use so it only applies once.
+          delayRemainingDisplay = overrideDuration !== null ? overrideDuration : node.duration;
+          overrideDuration      = null;
         }
 
-        // Reset all tracking variables for the new timer run
         ignoredCount    = 0;
         lastIgnoredTime = null;
         timerRunning    = true;
@@ -892,7 +949,6 @@ module.exports = function(RED) {
         startReporting(msg);
 
       } else {
-        // _timerpass was set and timer is stopped and ignoretimerpass is off — drop the message
         node.status({ fill: "red", shape: "ring", text: "stopped" });
       }
     }
@@ -902,16 +958,12 @@ module.exports = function(RED) {
     // -------------------------------------------------------------------------
 
     /**
-     * Called when the main setTimeout fires. If the full delay has elapsed,
-     * sends the timer expiry messages on outputs 1, 2, and 3.
-     * If the delay was longer than maxTimeout, chains another setTimeout
-     * for the remaining time.
+     * Called when the main setTimeout fires.
      *
      * @param {object} msg - The original message that started the timer
      */
     function timerElapsed(msg) {
       if (actualDelayRemaining === 0) {
-        // Full delay has elapsed — fire the timer
         clearInterval(countdown);
         timerRunning = false;
         timerState   = TIMER_STATE.EXPIRED;
@@ -927,7 +979,6 @@ module.exports = function(RED) {
           msg.timerDuration  = timerDuration;
           msg.elapsedTime    = getElapsedTime();
 
-          // Output 3 is null when reporting is NONE
           let msg3 = reporting === REPORTING.NONE ? null : {
             payload:       displayTime(0, reportingformat),
             timerState:    timerState,
@@ -946,11 +997,9 @@ module.exports = function(RED) {
         countdown   = null;
         miniTimeout = null;
       } else if (actualDelayRemaining > maxTimeout) {
-        // Chain another maxTimeout setTimeout for very long delays
         actualDelayInUse      = maxTimeout;
         actualDelayRemaining -= maxTimeout;
       } else {
-        // Final chained setTimeout for the remaining portion
         actualDelayInUse     = actualDelayRemaining;
         actualDelayRemaining = 0;
       }
@@ -967,7 +1016,7 @@ module.exports = function(RED) {
      *
      * @param {number} delayToDisplay  - Remaining time in milliseconds
      * @param {string} reportingformat - One of the REPORTING_FORMAT values
-     * @returns {string|number} Formatted time — string for HUMAN, number for others
+     * @returns {string|number} Formatted time
      */
     function displayTime(delayToDisplay, reportingformat) {
       delayToDisplay = delayToDisplay / 1000;
@@ -990,8 +1039,6 @@ module.exports = function(RED) {
 
     /**
      * Writes the current timer state to a persistent file on disk.
-     * Only writes if persistence is enabled in the node configuration.
-     * Uses JSON.decycle to handle circular references in the original message.
      *
      * @param {object|null} msg - The original message to persist, or null
      */
@@ -1003,16 +1050,18 @@ module.exports = function(RED) {
         }
         let target = (new Date((new Date().getTime() + delayRemainingDisplay))).toISOString();
         fs.writeFileSync(stvdtimersFile, JSON.stringify(JSON.decycle({
-          reporting:       node.reporting,
-          reportingformat: node.reportingformat,
-          time:            target,
-          origmsg:         msg !== null ? msg : {},
-          paused:          paused,
-          timerDuration:   timerDuration,
-          timerStartTime:  timerStartTime ? timerStartTime.toISOString() : null,
-          timerState:      timerState,
-          ignoredCount:    ignoredCount,
-          lastIgnoredTime: lastIgnoredTime ? lastIgnoredTime.toISOString() : null
+          reporting:        node.reporting,
+          reportingformat:  node.reportingformat,
+          time:             target,
+          origmsg:          msg !== null ? msg : {},
+          paused:           paused,
+          timerDuration:    timerDuration,
+          timerStartTime:   timerStartTime ? timerStartTime.toISOString() : null,
+          timerState:       timerState,
+          ignoredCount:     ignoredCount,
+          lastIgnoredTime:  lastIgnoredTime ? lastIgnoredTime.toISOString() : null,
+          donotresettimer:  node.donotresettimer,
+          overrideDuration: overrideDuration
         })));
       } catch (error) {
         node.error("Error writing persistent file for stoptimer-varidelay node " + node.id.toString() + "\n\n" + error.toString());
@@ -1020,8 +1069,7 @@ module.exports = function(RED) {
     }
 
     /**
-     * Reads the persistent state file from disk and returns its contents as a string.
-     * Returns -1 if the file cannot be read.
+     * Reads the persistent state file from disk.
      *
      * @returns {string|number} File contents as a string, or -1 on error
      */
@@ -1037,7 +1085,6 @@ module.exports = function(RED) {
 
     /**
      * Deletes the persistent state file from disk if it exists.
-     * Called when the timer expires, is stopped, or the node is removed.
      */
     function deleteState() {
       try {
