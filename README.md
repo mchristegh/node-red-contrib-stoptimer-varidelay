@@ -82,5 +82,10 @@ Practical flow examples are available in the wiki:
 ## Attribution
 This node is a fork of `node-red-contrib-stoptimer-varidelay` by hamsando, which itself was a fork of the original stoptimer node by jbardi. Both are licensed under the Apache 2.0 License. All original copyright notices have been preserved in the source code.
 
+## Contributing
+This project is not currently accepting pull requests. If you find a bug or have a feature request, please open an issue on the [GitHub repository](https://github.com/mchristegh/node-red-contrib-stoptimer-varidelay/issues) and it will be considered for a future release.
+
+If you would like to build on this work, you are welcome to fork the repository under the terms of the Apache 2.0 License.
+
 ## License
 Apache-2.0
