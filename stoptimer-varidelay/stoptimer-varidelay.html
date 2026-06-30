@@ -1,3 +1,197 @@
+<!--
+  Modifications copyright (C) 2025 mchristegh
+  Modifications copyright (C) 2020 hamsando
+  Copyright jbardi
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
+<script type="text/javascript">
+    RED.nodes.registerType('stoptimer-varidelay-plus',{
+        category: 'function',
+        color:"#869869",
+        defaults: {
+            duration: {value:"5",required:true,validate:RED.validators.typedInput("durationType")},
+            durationType: {value:'num'},
+            units: {value:"Second"},
+            payloadtype: {value:'num'},
+            payloadval: {value:"0"},
+            name: {value:""},
+            reporting: {value:"none"},
+            reportingformat: {value:"human"},
+            persist: {value:false},
+            ignoretimerpass: {value:false},
+            donotresettimer: {value:false},
+            thresholdaction: {value:"donothing"},
+            thresholdcount: {value:"0"},
+            thresholdaddtime: {value:"0"},
+            thresholdaddtimeunits: {value:"Second"}
+        },
+        inputs:1,
+        outputs:5,
+        icon: "stoptimer.png",
+        label: function() {
+            return this.name || this.duration + " " + this.units + " Timer";
+        },
+        labelStyle: function() {
+            return this.name?"node_label_italic":"";
+        },
+        outputLabels: ["Original Payload","Additional Payload","Time Remaining","Ignored Message","Event"],
+        oneditprepare: function() {
+            $("#node-input-payloadval").typedInput({
+                default: 'num',
+                typeField: $("#node-input-payloadtype"),
+                types:['str','num','bool']
+            });
+
+            if (this.durationType == null) {
+                this.durationType = "num";
+            }
+
+            $("#node-input-durationType").val(this.durationType);
+
+            $("#node-input-duration").typedInput({
+                default: 'num',
+                typeField: $("#node-input-durationType"),
+                types:['num','env']
+            });
+
+            $("#node-input-duration").typedInput('type', this.durationType);
+
+            $("#node-input-reporting").val(this.reporting);
+            $("#node-input-reportingformat").val(this.reportingformat);
+            $("#node-input-thresholdaction").val(this.thresholdaction);
+            $("#node-input-thresholdaddtimeunits").val(this.thresholdaddtimeunits);
+
+            function updateThresholdVisibility() {
+                let action = $("#node-input-thresholdaction").val();
+                if (action === "donothing") {
+                    $("#threshold-count-row").hide();
+                    $("#threshold-addtime-row").hide();
+                    $("#threshold-addtimeunits-row").hide();
+                } else if (action === "addtime") {
+                    $("#threshold-count-row").show();
+                    $("#threshold-addtime-row").show();
+                    $("#threshold-addtimeunits-row").show();
+                } else {
+                    $("#threshold-count-row").show();
+                    $("#threshold-addtime-row").hide();
+                    $("#threshold-addtimeunits-row").hide();
+                }
+            }
+
+            $("#node-input-thresholdaction").on("change", updateThresholdVisibility);
+            updateThresholdVisibility();
+        }
+    });
+</script>
+
+<script type="text/x-red" data-template-name="stoptimer-varidelay-plus">
+    <div class="form-row">
+        <i class="fa fa-clock-o"></i>
+        <label for="node-input-duration"> Timer</label>
+        <input type="hidden" id="node-input-durationType">
+        <input type="text" id="node-input-duration" style="text-align:end; width:270px !important">
+    </div>
+    <div class="form-row">
+        <i class="fa fa-bars"></i>
+        <label for="node-input-units"> Units</label>
+        <select id="node-input-units">
+            <option value="Millisecond">Milliseconds</option>
+            <option value="Second">Seconds</option>
+            <option value="Minute">Minutes</option>
+            <option value="Hour">Hours</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <i class="fa fa-heartbeat"></i>
+        <label for="node-input-reporting"> Reporting</label>
+        <select id="node-input-reporting">
+            <option value="none">Never</option>
+            <option value="every_second">Every Second</option>
+            <option value="last_minute_seconds">Every Minute, Last minute by seconds</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-reportingformat"> Reporting format</label>
+        <select id="node-input-reportingformat">
+            <option value="human">HH:MM:SS</option>
+            <option value="seconds">Seconds</option>
+            <option value="minutes">Minutes</option>
+            <option value="hours">Hours</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <i class="fa fa-floppy-o"></i>
+        <label style="width:auto" for="node-input-persist"> Resume timer on deploy/restart</label>
+        <input type="checkbox" id="node-input-persist" style="display:inline-block; width:auto; vertical-align:top;">
+    </div>
+    <div class="form-row">
+        <i class="fa fa-recycle"></i>
+        <label style="width:auto" for="node-input-ignoretimerpass"> Ignore incoming _timerpass</label>
+        <input type="checkbox" id="node-input-ignoretimerpass" style="display:inline-block; width:auto; vertical-align:top;">
+    </div>
+    <div class="form-row">
+        <i class="fa fa-lock"></i>
+        <label style="width:auto" for="node-input-donotresettimer"> Do Not Reset Timer on Subsequent Incoming Message</label>
+        <input type="checkbox" id="node-input-donotresettimer" style="display:inline-block; width:auto; vertical-align:top;">
+    </div>
+    <hr>
+    <div class="form-row">
+        <i class="fa fa-exclamation-triangle"></i>
+        <label for="node-input-thresholdaction"> Ignored Message Threshold Action</label>
+        <select id="node-input-thresholdaction">
+            <option value="donothing">Do Nothing</option>
+            <option value="stop">Stop</option>
+            <option value="pause">Pause</option>
+            <option value="reset">Reset Timer</option>
+            <option value="addtime">Add Time</option>
+            <option value="warning">Emit Warning</option>
+        </select>
+    </div>
+    <div class="form-row" id="threshold-count-row">
+        <i class="fa fa-hashtag"></i>
+        <label for="node-input-thresholdcount"> Threshold Count</label>
+        <input type="number" id="node-input-thresholdcount" min="1" style="width:100px">
+    </div>
+    <div class="form-row" id="threshold-addtime-row">
+        <i class="fa fa-plus-circle"></i>
+        <label for="node-input-thresholdaddtime"> Add Time Amount</label>
+        <input type="number" id="node-input-thresholdaddtime" min="1" style="width:100px">
+    </div>
+    <div class="form-row" id="threshold-addtimeunits-row">
+        <label for="node-input-thresholdaddtimeunits"> Add Time Units</label>
+        <select id="node-input-thresholdaddtimeunits">
+            <option value="Millisecond">Milliseconds</option>
+            <option value="Second">Seconds</option>
+            <option value="Minute">Minutes</option>
+            <option value="Hour">Hours</option>
+        </select>
+    </div>
+    <hr>
+    <div class="form-row">
+        <i class="fa fa-envelope"></i>
+        <label for="node-input-payloadtype"> 2nd Payload</label>
+        <input type="hidden" id="node-input-payloadtype">
+        <input style="width: 70%" type="text" id="node-input-payloadval">
+    </div>
+    <div class="form-row">
+        <i class="fa fa-tag"></i>
+        <label for="node-input-name"> Name</label>
+        <input type="text" id="node-input-name" placeholder="Name"></input>
+    </div>
+</script>
+
 <script type="text/x-red" data-help-name="stoptimer-varidelay-plus">
     <p><B>General usage</B><br>
        Sends the <code>msg</code> through the first output after the set timer duration. If a new <code>msg</code> is received before the timer has ended, it will replace the existing <code>msg</code> and the timer will be restarted, unless the new <code>msg</code> has a <code>payload</code> of a recognized control command. All control commands are <b>case insensitive</b>. The second output allows you to send an additional payload of a number, string or boolean. If the timer is stopped, the second and third outputs will automatically send a payload of <code>stopped</code>. The third output will send the time remaining as time ticks away.
@@ -25,11 +219,11 @@
         <li><code>query</code> — returns a full state snapshot on output 5 without affecting the timer</li>
         <li><code>lock</code> — enables Do Not Reset Timer at runtime</li>
         <li><code>unlock</code> — disables Do Not Reset Timer at runtime</li>
-        <li><code>disable</code> — prevents new timer starts. Everything else (stop, pause, resume, query, lock, unlock, adjusttime, settime, setduration) works normally. The current timer run continues if running.</li>
+        <li><code>disable</code> — prevents new timer starts. Everything else works normally. The current timer run continues if running.</li>
         <li><code>enable</code> — re-enables new timer starts</li>
-        <li><code>adjusttime</code> — adds or subtracts time from the current remaining time (running or paused only). Requires <code>msg.adjusttime</code> in milliseconds (positive or negative). Optionally set <code>msg.adjusttimeunits</code> to override units.</li>
-        <li><code>settime</code> — sets the current remaining time to an exact value (running or paused only). Requires <code>msg.settime</code> in milliseconds. Optionally set <code>msg.settimeunits</code> to override units. Must be positive.</li>
-        <li><code>setduration</code> — sets the timer duration for all future runs. Requires <code>msg.setduration</code> in milliseconds. Optionally set <code>msg.setdurationunits</code> to override units. Must be positive. Works in all states.</li>
+        <li><code>adjusttime</code> — adds or subtracts time from the current remaining time (running or paused only). Requires <code>msg.adjusttime</code> in milliseconds. Optionally set <code>msg.adjusttimeunits</code> to override units.</li>
+        <li><code>settime</code> — sets the current remaining time to an exact value (running or paused only). Requires <code>msg.settime</code> in milliseconds. Optionally set <code>msg.settimeunits</code>. Must be positive.</li>
+        <li><code>setduration</code> — sets the timer duration for all future runs. Requires <code>msg.setduration</code> in milliseconds. Optionally set <code>msg.setdurationunits</code>. Must be positive. Works in all states.</li>
       </ul>
     </p>
     <p><B>Message properties on all outputs</B><br>
@@ -67,7 +261,6 @@
         <li><code>threshold_time_added</code> — threshold action added time. <code>msg.timeAdded</code> contains the amount added in milliseconds.</li>
         <li><code>threshold_warning</code> — warning threshold hit, no action taken on timer</li>
       </ul>
-      Note: when a threshold Stop action fires, both <code>threshold_stopped</code> and <code>stopped</code> events are sent on output 5. When a threshold Pause action fires, both <code>threshold_paused</code> and <code>paused</code> events are sent.
     </p>
     <p><B>Querying the timer</B><br>
       Send a message with <code>msg.payload</code> of <code>query</code> (any case) to get a full snapshot of the current timer state on output 5. The timer is not affected in any way by a query message.
