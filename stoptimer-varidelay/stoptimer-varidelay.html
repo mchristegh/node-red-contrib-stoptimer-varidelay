@@ -35,7 +35,9 @@
             thresholdaction: {value:"donothing"},
             thresholdcount: {value:"0"},
             thresholdaddtime: {value:"0"},
-            thresholdaddtimeunits: {value:"Second"}
+            thresholdaddtimeunits: {value:"Second"},
+            heartbeatinterval: {value:"0"},
+            heartbeatintervalunits: {value:"Second"}
         },
         inputs:1,
         outputs:5,
@@ -72,6 +74,7 @@
             $("#node-input-reportingformat").val(this.reportingformat);
             $("#node-input-thresholdaction").val(this.thresholdaction);
             $("#node-input-thresholdaddtimeunits").val(this.thresholdaddtimeunits);
+            $("#node-input-heartbeatintervalunits").val(this.heartbeatintervalunits);
 
             function updateThresholdVisibility() {
                 let action = $("#node-input-thresholdaction").val();
@@ -180,6 +183,21 @@
     </div>
     <hr>
     <div class="form-row">
+        <i class="fa fa-heart-o"></i>
+        <label for="node-input-heartbeatinterval"> Heartbeat Interval</label>
+        <input type="number" id="node-input-heartbeatinterval" min="0" style="width:100px">
+    </div>
+    <div class="form-row">
+        <label for="node-input-heartbeatintervalunits"> Heartbeat Units</label>
+        <select id="node-input-heartbeatintervalunits">
+            <option value="Millisecond">Milliseconds</option>
+            <option value="Second">Seconds</option>
+            <option value="Minute">Minutes</option>
+            <option value="Hour">Hours</option>
+        </select>
+    </div>
+    <hr>
+    <div class="form-row">
         <i class="fa fa-envelope"></i>
         <label for="node-input-payloadtype"> 2nd Payload</label>
         <input type="hidden" id="node-input-payloadtype">
@@ -226,6 +244,19 @@
         <li><code>setduration</code> — sets the timer duration for all future runs. Requires <code>msg.setduration</code> in milliseconds. Optionally set <code>msg.setdurationunits</code>. Must be positive. Works in all states.</li>
       </ul>
     </p>
+    <p><B>Heartbeat</B><br>
+      Optionally configure a <i>Heartbeat Interval</i> to send a periodic "still alive" signal on output 5 while a timer run is active. This is useful for external monitoring or watchdog systems that need to confirm the node is functioning correctly over long running timers.
+      <ul>
+        <li>Set to <code>0</code> (default) to disable</li>
+        <li>The heartbeat starts the moment the timer starts and fires on a fixed schedule</li>
+        <li>The heartbeat fires whether the timer is running <b>or</b> paused</li>
+        <li>The heartbeat schedule is <b>not</b> affected by pause, resume, adjusttime, settime, or threshold actions — it ticks independently on its own fixed interval once started</li>
+        <li>The heartbeat stops when the timer is stopped or expires</li>
+        <li><code>disable</code> does not affect an in-progress run's heartbeat — it continues until the run stops or expires naturally</li>
+        <li>After a persisted restart, the heartbeat restarts fresh from that point rather than resuming the original schedule</li>
+      </ul>
+      Each heartbeat message on output 5 has <code>msg.timerEvent = "heartbeat"</code> along with the full standard state snapshot, so you can see <code>timerState</code>, <code>remainingTime</code>, <code>disabled</code>, and <code>doNotResetTimer</code> at the moment of each heartbeat.
+    </p>
     <p><B>Message properties on all outputs</B><br>
       All output messages include the following additional properties:
       <ul>
@@ -252,6 +283,7 @@
         <li><code>unlocked</code> — donotresettimer disabled at runtime</li>
         <li><code>disabled</code> — node disabled, new starts prevented</li>
         <li><code>enabled</code> — node enabled, new starts allowed</li>
+        <li><code>heartbeat</code> — periodic liveness signal, see Heartbeat section above</li>
         <li><code>timeadjusted</code> — remaining time adjusted. <code>msg.timeAdjusted</code> contains the adjustment in milliseconds.</li>
         <li><code>timeset</code> — remaining time set to exact value. <code>msg.timeSet</code> contains the new remaining time in milliseconds.</li>
         <li><code>durationset</code> — future duration set. <code>msg.durationSet</code> contains the new duration in milliseconds.</li>
@@ -294,7 +326,7 @@
     <p><b>Disable and Enable</b><br>
       The node can be disabled to prevent new timer starts while allowing the current run to complete:
       <ul>
-        <li><code>disable</code> (any case) — prevents new timer starts. The current timer run continues if running. The timer can still be stopped, paused, resumed, queried, locked, unlocked, and time adjusted while disabled. A duplicate disable is routed to output 4.</li>
+        <li><code>disable</code> (any case) — prevents new timer starts. The current timer run continues if running, including any active heartbeat. The timer can still be stopped, paused, resumed, queried, locked, unlocked, and time adjusted while disabled. A duplicate disable is routed to output 4.</li>
         <li><code>enable</code> (any case) — re-enables new timer starts</li>
       </ul>
       When disabled, the node status shows a grey ring with <code>Disabled | </code> prefixed to the normal status text. The disabled state is persisted to disk if <i>Resume timer on deploy/restart</i> is enabled.

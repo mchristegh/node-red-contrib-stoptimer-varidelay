@@ -22,7 +22,7 @@ The node has 5 outputs:
 | 2 | Additional Payload | When the timer expires, stops, pauses, or resumes |
 | 3 | Time Remaining | Countdown updates while timer is running |
 | 4 | Ignored Message | When an incoming message is ignored |
-| 5 | Event | Timer lifecycle events and threshold actions |
+| 5 | Event | Complete timer lifecycle events, heartbeats, and threshold actions |
 
 ## Control Commands
 All commands are case insensitive and support any combination of upper and lower case:
@@ -35,9 +35,24 @@ All commands are case insensitive and support any combination of upper and lower
 | `query` | Returns a full state snapshot on output 5 without affecting the timer |
 | `lock` | Enables Do Not Reset Timer at runtime |
 | `unlock` | Disables Do Not Reset Timer at runtime |
+| `disable` | Prevents new timer starts. The current run (if any) continues to completion. Everything else still works normally while disabled. |
+| `enable` | Re-enables new timer starts |
 | `adjusttime` | Adds or subtracts time from the current remaining time (requires `msg.adjusttime`) |
 | `settime` | Sets the current remaining time to an exact value (requires `msg.settime`) |
 | `setduration` | Sets the timer duration for all future runs (requires `msg.setduration`) |
+
+## Heartbeat
+Optionally configure a **Heartbeat Interval** in the node settings to receive a periodic "still alive" signal on output 5 while a timer run is active. Useful for external monitoring or watchdog systems that need confirmation the node is functioning correctly during long-running timers.
+
+- Set to `0` (default) to disable
+- Starts the moment the timer starts, on a fixed wall-clock schedule
+- Fires whether the timer is running **or** paused
+- **Not** affected by pause, resume, adjusttime, settime, or threshold actions — once started, it ticks independently on its own schedule
+- Stops when the timer is stopped or expires
+- `disable` does not interrupt an in-progress run's heartbeat
+- After a persisted restart, the heartbeat restarts fresh rather than resuming the original schedule
+
+Each heartbeat carries `msg.timerEvent = "heartbeat"` plus the full standard state snapshot (`timerState`, `remainingTime`, `disabled`, `doNotResetTimer`, etc.).
 
 ## Feature Summary
 - **Variable delay** — configure duration in milliseconds, seconds, minutes, or hours, or override at runtime via `msg.delay` and `msg.units`
@@ -46,13 +61,16 @@ All commands are case insensitive and support any combination of upper and lower
 - **Pause and Resume** — freeze the countdown and resume from the same point
 - **Query** — get a full snapshot of the current timer state without affecting the timer
 - **Lock and Unlock** — dynamically enable or disable Do Not Reset Timer at runtime
+- **Disable and Enable** — prevent or re-allow new timer starts without interrupting a run already in progress. Useful for enforcing a mandatory rest/off period between cycles (e.g. a dehumidifier that must stay off for a fixed period after each run).
 - **Adjust Time** — add or subtract time from the current remaining time
 - **Set Time** — set the current remaining time to an exact value
 - **Set Duration** — set the timer duration for all future runs
+- **Heartbeat** — optional periodic liveness signal on output 5, independent of pause/resume/adjustments, ideal for external monitoring
 - **Do Not Reset** — optionally prevent subsequent incoming messages from resetting the timer while it is running
 - **Ignored Message Threshold Actions** — automatically take action (stop, pause, reset, add time, or emit warning) when a configured number of messages have been ignored
-- **Persistence** — optionally resume the timer across Node-RED restarts and redeploys, including paused state and runtime lock state
-- **Rich output properties** — every output carries `msg.timerState`, `msg.timerDuration`, `msg.elapsedTime`, `msg.remainingTime`, `msg.doNotResetTimer` and more
+- **Persistence** — optionally resume the timer across Node-RED restarts and redeploys, including paused state, runtime lock state, and disabled state
+- **Rich output properties** — every output carries `msg.timerState`, `msg.timerDuration`, `msg.elapsedTime`, `msg.remainingTime`, `msg.doNotResetTimer`, `msg.disabled` and more
+- **Complete lifecycle log on output 5** — every event (started, paused, resumed, stopped, expired, locked, unlocked, disabled, enabled, heartbeat, time adjustments, and threshold actions) is reported on a single output for easy monitoring
 - **Configurable reporting** — update the node status and output 3 never, every second, or every minute with last-minute-by-seconds switching
 - **Configurable reporting format** — HH:MM:SS, total seconds, total minutes, or total hours
 
@@ -79,13 +97,13 @@ Practical flow examples are available in the wiki:
 - [Ignored Messages and Thresholds](https://github.com/mchristegh/node-red-contrib-stoptimer-varidelay/wiki/Examples-Ignored-Messages-and-Thresholds)
 - [Monitoring and Advanced](https://github.com/mchristegh/node-red-contrib-stoptimer-varidelay/wiki/Examples-Monitoring-and-Advanced)
 
-## Attribution
-This node is a fork of `node-red-contrib-stoptimer-varidelay` by hamsando, which itself was a fork of the original stoptimer node by jbardi. Both are licensed under the Apache 2.0 License. All original copyright notices have been preserved in the source code.
-
 ## Contributing
 This project is not currently accepting pull requests. If you find a bug or have a feature request, please open an issue on the [GitHub repository](https://github.com/mchristegh/node-red-contrib-stoptimer-varidelay/issues) and it will be considered for a future release.
 
 If you would like to build on this work, you are welcome to fork the repository under the terms of the Apache 2.0 License.
+
+## Attribution
+This node is a fork of `node-red-contrib-stoptimer-varidelay` by hamsando, which itself was a fork of the original stoptimer node by jbardi. Both are licensed under the Apache 2.0 License. All original copyright notices have been preserved in the source code.
 
 ## License
 Apache-2.0
